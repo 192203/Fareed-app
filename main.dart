@@ -47,10 +47,10 @@ ThemeData buildTheme() {
 
 const List<String> caseStatuses = ['جارية', 'مؤجلة', 'محكوم فيها', 'منتهية'];
 const List<String> caseTypes = [
-  'أحوال شخصية',
-  'مدني',
-  'جنائي',
-  'تجاري',
+  'القضايا التجارية',
+  'القضايا الجنائية',
+  'القضايا المدنية',
+  'الأحوال الشخصية',
   'عمالي',
   'إداري',
   'إيجارات',
@@ -615,7 +615,10 @@ class _AuthPageState extends State<AuthPage> {
                       color: AppColors.gold.withValues(alpha: 0.12),
                       border: Border.all(color: AppColors.gold),
                     ),
-                    child: const Icon(Icons.balance, size: 48, color: AppColors.gold),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Image.asset('assets/images/fareed_logo.png', fit: BoxFit.contain),
+                    ),
                   ),
                   const SizedBox(height: 18),
                   const Text(
@@ -1886,6 +1889,70 @@ class _LawyerHomeState extends State<LawyerHome> {
   }
 }
 
+
+
+class _ContactItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _ContactItem({required this.icon, required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) => Expanded(child: Column(children: [
+    CircleAvatar(backgroundColor: const Color(0xFF173D75), child: Icon(icon, color: AppColors.text, size: 18)),
+    const SizedBox(height: 6),
+    Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+    Text(value, textAlign: TextAlign.center, style: const TextStyle(fontSize: 8, color: AppColors.muted)),
+  ]));
+}
+
+class LegalServiceCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  const LegalServiceCard({
+    super.key, required this.icon, required this.title,
+    required this.subtitle, this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF0A2044),
+      borderRadius: BorderRadius.circular(17),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(17),
+            border: Border.all(color: const Color(0xFF24518D), width: 1),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              colors: [Color(0xFF102D59), Color(0xFF071936)],
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: title == 'القضايا التجارية' ? AppColors.gold : const Color(0xFF69A8FF), size: 31),
+              const SizedBox(height: 10),
+              Text(title, textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.text, fontSize: 12, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 5),
+              Text(subtitle, textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.muted, fontSize: 10)),
+              const SizedBox(height: 7),
+              const Icon(Icons.chevron_right, color: AppColors.muted, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class LawyerDashboard extends StatefulWidget {
   final String name;
   final void Function(int) onGo;
@@ -1968,9 +2035,7 @@ class _LawyerDashboardState extends State<LawyerDashboard> {
     return RefreshIndicator(
       onRefresh: () async {
         _reload();
-        try {
-          await _future;
-        } catch (_) {}
+        try { await _future; } catch (_) {}
       },
       child: FutureBuilder<Map<String, dynamic>>(
         future: _future,
@@ -1981,102 +2046,122 @@ class _LawyerDashboardState extends State<LawyerDashboard> {
               : List<Map<String, dynamic>>.from(data['upcoming'] as List);
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
-              PageHeader(
-                title: 'أهلًا$first',
-                subtitle: 'لوحة تحكم مكتب فريد عبدالهادي',
+              Row(
+                children: [
+                  const Icon(Icons.notifications_none, color: AppColors.text, size: 25),
+                  const Spacer(),
+                  Column(children: [
+                    Image.asset('assets/images/fareed_logo.png', width: 48, height: 48),
+                    const Text('فريد حسام عبدالهادي', style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
+                  ]),
+                  const Spacer(),
+                  const Icon(Icons.menu, color: AppColors.text, size: 27),
+                ],
               ),
+              const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: const Color(0xFF2765B5)),
                   gradient: const LinearGradient(
-                    begin: Alignment.topRight,
-                    end: Alignment.bottomLeft,
-                    colors: [AppColors.blueDark, AppColors.navy],
+                    begin: Alignment.topRight, end: Alignment.bottomLeft,
+                    colors: [Color(0xFF12366B), Color(0xFF06152F), Color(0xFF020B1D)],
                   ),
-                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.35)),
+                  boxShadow: [BoxShadow(color: AppColors.blue.withValues(alpha: .16), blurRadius: 22)],
                 ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      'فريد عبدالهادي',
-                      style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 6),
-                    Text(
-                      'إدارة القضايا والجلسات والعملاء من مكان واحد',
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, height: 1.5),
-                    ),
+                    const Text('مكتب المستشار', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 4),
+                    const Text('فريد حسام عبدالهادي', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 7),
+                    const Text('للمحاماة والاستشارات القانونية',
+                      style: TextStyle(color: AppColors.muted, fontSize: 14)),
+                    const SizedBox(height: 12),
+                    const Text('نحن معك في كل خطوة نحو حقك',
+                      style: TextStyle(color: AppColors.gold, fontSize: 12)),
+                    const SizedBox(height: 18),
+                    Row(children: [
+                      Expanded(child: PrimaryButton(
+                        label: 'إضافة قضية', icon: Icons.folder_open,
+                        onPressed: _addCase,
+                      )),
+                      const SizedBox(width: 9),
+                      Expanded(child: PrimaryButton(
+                        label: 'حجز جلسة', icon: Icons.calendar_month,
+                        onPressed: _addSession,
+                      )),
+                    ]),
                   ],
                 ),
               ),
+              if (snap.hasError) ErrorBox(error: snap.error!, onRetry: _reload),
+              const SectionTitle('خدماتنا القانونية'),
+              GridView.count(
+                crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 10, mainAxisSpacing: 10, childAspectRatio: 1.08,
+                children: [
+                  LegalServiceCard(icon: Icons.balance, title: 'القضايا التجارية', subtitle: 'شركات • منازعات', onTap: () => widget.onGo(2)),
+                  LegalServiceCard(icon: Icons.verified_user_outlined, title: 'القضايا الجنائية', subtitle: 'جنايات • جنح', onTap: () => widget.onGo(2)),
+                  LegalServiceCard(icon: Icons.description_outlined, title: 'القضايا المدنية', subtitle: 'عقود • تعويضات', onTap: () => widget.onGo(2)),
+                  LegalServiceCard(icon: Icons.people_alt_outlined, title: 'الأحوال الشخصية', subtitle: 'زواج • طلاق • نفقة', onTap: () => widget.onGo(2)),
+                ],
+              ),
               const SizedBox(height: 14),
-              if (snap.hasError)
-                ErrorBox(error: snap.error!, onRetry: _reload)
-              else
-                Row(
-                  children: [
-                    Expanded(
-                      child: StatTile(
-                        label: 'العملاء',
-                        value: data == null ? '-' : data['clients'].toString(),
-                        onTap: () => widget.onGo(1),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: StatTile(
-                        label: 'القضايا',
-                        value: data == null ? '-' : data['cases'].toString(),
-                        onTap: () => widget.onGo(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: StatTile(
-                        label: 'جلسات قادمة',
-                        value: data == null ? '-' : upcoming.length.toString(),
-                        onTap: () => widget.onGo(3),
-                      ),
-                    ),
-                  ],
-                ),
-              const SectionTitle('إجراءات سريعة'),
-              _action(Icons.create_new_folder_outlined, 'إضافة قضية جديدة', _addCase),
-              _action(Icons.event_note_outlined, 'إضافة جلسة', _addSession),
+              Panel(
+                padding: const EdgeInsets.all(17),
+                onTap: () => widget.onGo(2),
+                child: Row(children: [
+                  const CircleAvatar(backgroundColor: Color(0xFF604B2C), child: Icon(Icons.folder_open, color: AppColors.gold)),
+                  const SizedBox(width: 13),
+                  const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('قضايا المكتب', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                    Text('تابع حالة القضايا ومواعيدها', style: TextStyle(color: AppColors.muted, fontSize: 11)),
+                  ])),
+                  Text(data == null ? '—' : '${data['cases']}', style: const TextStyle(fontSize: 22, color: AppColors.text, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8), const Icon(Icons.chevron_right, color: AppColors.muted),
+                ]),
+              ),
+              const SectionTitle('ملخص المكتب'),
+              if (data != null) Row(children: [
+                Expanded(child: StatTile(label: 'العملاء', value: data['clients'].toString(), onTap: () => widget.onGo(1))),
+                const SizedBox(width: 8),
+                Expanded(child: StatTile(label: 'القضايا', value: data['cases'].toString(), onTap: () => widget.onGo(2))),
+                const SizedBox(width: 8),
+                Expanded(child: StatTile(label: 'جلسات قادمة', value: upcoming.length.toString(), onTap: () => widget.onGo(3))),
+              ]),
               const SectionTitle('أقرب الجلسات'),
               if (data != null && upcoming.isEmpty)
                 const EmptyState(icon: Icons.event_available, text: 'لا توجد جلسات قادمة'),
-              for (final s in upcoming.take(3))
-                Panel(
-                  child: Row(
-                    children: [
-                      const Icon(Icons.event, color: AppColors.gold),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              relName(s['cases'], 'title').isEmpty
-                                  ? (s['title'] ?? 'جلسة').toString()
-                                  : relName(s['cases'], 'title'),
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              fmtDateTime(s['session_at']),
-                              style: const TextStyle(fontSize: 12, color: AppColors.muted),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              for (final item in upcoming.take(3))
+                Panel(child: Row(children: [
+                  const Icon(Icons.event, color: AppColors.gold),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(relName(item['cases'], 'title').isEmpty ? (item['title'] ?? 'جلسة').toString() : relName(item['cases'], 'title'),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 3),
+                    Text(fmtDateTime(item['session_at']), style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+                  ])),
+                ])),
+              const SizedBox(height: 12),
+              const Panel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('تواصل معنا مباشرة', style: TextStyle(fontWeight: FontWeight.bold)),
+                SizedBox(height: 12),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+                  _ContactItem(icon: Icons.phone, label: 'اتصال', value: '01092790355'),
+                  _ContactItem(icon: Icons.chat, label: 'واتساب', value: '01067095323'),
+                  _ContactItem(icon: Icons.email_outlined, label: 'البريد', value: 'fareedhosam983@gmail.com'),
+                ]),
+                SizedBox(height: 8),
+                Text('محافظة كفر الشيخ • الرياض • الوزارية الجديدة',
+                  style: TextStyle(color: AppColors.muted, fontSize: 11)),
+              ])),
             ],
           );
         },
@@ -2208,9 +2293,33 @@ class _ClientDashboardState extends State<ClientDashboard> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
             children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Image.asset('assets/images/fareed_logo.png', width: 42, height: 42),
+                  const SizedBox(width: 10),
+                  const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('مكتب المحامي', style: TextStyle(color: AppColors.muted, fontSize: 11)),
+                    Text('فريد حسام عبدالهادي', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w900, fontSize: 16)),
+                  ]),
+                ],
+              ),
               PageHeader(
                 title: 'أهلًا$first',
-                subtitle: 'تابع قضاياك وجلساتك مع مكتب فريد عبدالهادي',
+                subtitle: 'تابع قضاياك وجلساتك مع مكتب فريد حسام عبدالهادي',
+              ),
+              const SectionTitle('خدماتنا القانونية'),
+              GridView.count(
+                crossAxisCount: 2, shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 10, mainAxisSpacing: 10,
+                childAspectRatio: 1.25,
+                children: [
+                  LegalServiceCard(icon: Icons.balance, title: 'القضايا التجارية', subtitle: 'شركات • منازعات', onTap: () => widget.onGo(1)),
+                  LegalServiceCard(icon: Icons.verified_user_outlined, title: 'القضايا الجنائية', subtitle: 'جنايات • جنح', onTap: () => widget.onGo(1)),
+                  LegalServiceCard(icon: Icons.description_outlined, title: 'القضايا المدنية', subtitle: 'عقود • تعويضات', onTap: () => widget.onGo(1)),
+                  LegalServiceCard(icon: Icons.people_alt_outlined, title: 'الأحوال الشخصية', subtitle: 'زواج • طلاق • نفقة', onTap: () => widget.onGo(1)),
+                ],
               ),
               if (snap.hasError)
                 ErrorBox(error: snap.error!, onRetry: _reload)
@@ -2285,7 +2394,7 @@ class FareedApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'فريد عبدالهادي',
+      title: 'مكتب المحامي فريد حسام عبدالهادي',
       theme: buildTheme(),
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar')],
