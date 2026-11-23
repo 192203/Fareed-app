@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -53,8 +54,6 @@ ThemeData buildTheme() {
     ),
   );
 }
-
-import 'dart:math' as math;
 
 class AuroraBackground extends StatefulWidget {
   final Widget child;
