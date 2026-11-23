@@ -63,7 +63,7 @@ jobs:
       - name: Allow internet access and set app name
         run: |
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' android/app/src/main/AndroidManifest.xml
-          sed -i 's|android:label="[^"]*"|android:label="ميزان"|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|android:label="[^"]*"|android:label="Fareed-app"|' android/app/src/main/AndroidManifest.xml
 
       - name: Get dependencies
         run: flutter pub get
