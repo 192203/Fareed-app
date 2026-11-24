@@ -18,7 +18,7 @@ const String supabaseUrl = 'https://iwkhajjxybunfkaoapht.supabase.co';
 const String supabasePublishableKey = 'sb_publishable_jhGme2oBxCchOfy-h4ALyA_1GYYuHs2';
 
 const String officePhone = '01092790355';
-const String officeWhatsapp = '01067095323';
+const String officeWhatsapp = '01092790355';
 const String officeEmail = 'fareedhosam983@gmail.com';
 const String officeAddress = 'محافظة كفر الشيخ - الرياض - الوزارية الجديدة';
 
