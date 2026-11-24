@@ -97,7 +97,7 @@ jobs:
       - name: Allow internet, notifications and set app name
         run: |
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <application|' android/app/src/main/AndroidManifest.xml
-          sed -i 's|android:label="[^"]*"|android:label="ميزان"|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|android:label="[^"]*"|android:label="Fareed-app"|' android/app/src/main/AndroidManifest.xml
 
       - name: Generate app icon and notification icon
         run: |
