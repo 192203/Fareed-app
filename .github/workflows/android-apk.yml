@@ -60,10 +60,80 @@ jobs:
           EOF
           fi
 
-      - name: Allow internet access and set app name
+      - name: Enable core library desugaring
         run: |
-          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' android/app/src/main/AndroidManifest.xml
-          sed -i 's|android:label="[^"]*"|android:label="Fareed-app"|' android/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          import os, re
+          kts = 'android/app/build.gradle.kts'
+          groovy = 'android/app/build.gradle'
+          if os.path.exists(kts):
+              s = open(kts, encoding='utf-8').read()
+              if 'isCoreLibraryDesugaringEnabled' not in s:
+                  if re.search(r'compileOptions\s*\{', s):
+                      s = re.sub(r'(compileOptions\s*\{)', r'\1\n        isCoreLibraryDesugaringEnabled = true', s, count=1)
+                  else:
+                      s = re.sub(r'(android\s*\{)', r'\1\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n    }', s, count=1)
+                  line = '    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")'
+                  if re.search(r'^dependencies\s*\{', s, re.M):
+                      s = re.sub(r'(^dependencies\s*\{)', r'\1\n' + line, s, count=1, flags=re.M)
+                  else:
+                      s += '\ndependencies {\n' + line + '\n}\n'
+                  open(kts, 'w', encoding='utf-8').write(s)
+          elif os.path.exists(groovy):
+              s = open(groovy, encoding='utf-8').read()
+              if 'coreLibraryDesugaringEnabled' not in s:
+                  if re.search(r'compileOptions\s*\{', s):
+                      s = re.sub(r'(compileOptions\s*\{)', r'\1\n        coreLibraryDesugaringEnabled true', s, count=1)
+                  else:
+                      s = re.sub(r'(android\s*\{)', r'\1\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n    }', s, count=1)
+                  line = "    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'"
+                  if re.search(r'^dependencies\s*\{', s, re.M):
+                      s = re.sub(r'(^dependencies\s*\{)', r'\1\n' + line, s, count=1, flags=re.M)
+                  else:
+                      s += '\ndependencies {\n' + line + '\n}\n'
+                  open(groovy, 'w', encoding='utf-8').write(s)
+          PY
+
+      - name: Allow internet, notifications and set app name
+        run: |
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <application|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|android:label="[^"]*"|android:label="ميزان"|' android/app/src/main/AndroidManifest.xml
+
+      - name: Generate app icon and notification icon
+        run: |
+          python3 -m pip install --quiet --break-system-packages pillow
+          python3 - <<'PY'
+          import os
+          from PIL import Image, ImageDraw
+          res = 'android/app/src/main/res'
+          logo = Image.open('logo.png').convert('RGBA') if os.path.exists('logo.png') else None
+
+          def launcher(size):
+              bg = Image.new('RGBA', (size, size), (6, 20, 43, 255))
+              if logo is not None:
+                  l = logo.copy()
+                  l.thumbnail((int(size * 0.74), int(size * 0.74)), Image.LANCZOS)
+                  bg.alpha_composite(l, ((size - l.width) // 2, (size - l.height) // 2))
+              return bg
+
+          if logo is not None:
+              for d, s in {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}.items():
+                  p = res + '/mipmap-' + d
+                  os.makedirs(p, exist_ok=True)
+                  launcher(s).save(p + '/ic_launcher.png')
+
+          os.makedirs(res + '/drawable', exist_ok=True)
+          n = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
+          if logo is not None:
+              l = logo.copy()
+              l.thumbnail((90, 90), Image.LANCZOS)
+              white = Image.new('RGBA', l.size, (255, 255, 255, 255))
+              white.putalpha(l.split()[3])
+              n.alpha_composite(white, ((96 - l.width) // 2, (96 - l.height) // 2))
+          else:
+              ImageDraw.Draw(n).ellipse((12, 12, 84, 84), fill=(255, 255, 255, 255))
+          n.save(res + '/drawable/ic_notif.png')
+          PY
 
       - name: Get dependencies
         run: flutter pub get
