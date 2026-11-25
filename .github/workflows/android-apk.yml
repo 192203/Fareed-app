@@ -1,3 +1,4 @@
+
 name: Mizan Android APK
 
 on:
@@ -99,40 +100,77 @@ jobs:
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <application|' android/app/src/main/AndroidManifest.xml
           sed -i 's|android:label="[^"]*"|android:label="Fareed-app"|' android/app/src/main/AndroidManifest.xml
 
-      - name: Generate app icon and notification icon
+      - name: Generate borderless app icon
         run: |
           python3 -m pip install --quiet --break-system-packages pillow
           python3 - <<'PY'
           import os
-          from PIL import Image, ImageDraw
+          from PIL import Image
+
           res = 'android/app/src/main/res'
-          logo = Image.open('logo2.png').convert('RGBA') if os.path.exists('logo2.png') else None
+          logo_path = 'logo2.png'
+
+          if not os.path.exists(logo_path):
+              raise FileNotFoundError("logo2.png not found")
+
+          logo = Image.open(logo_path).convert('RGBA')
+
+          bbox = logo.getchannel('A').getbbox()
+          if bbox:
+              logo = logo.crop(bbox)
 
           def launcher(size):
-              bg = Image.new('RGBA', (size, size), (6, 20, 43, 255))
-              if logo is not None:
-                  l = logo.copy()
-                  l.thumbnail((int(size * 0.74), int(size * 0.74)), Image.LANCZOS)
-                  bg.alpha_composite(l, ((size - l.width) // 2, (size - l.height) // 2))
+              bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              icon = logo.copy()
+              icon.thumbnail(
+                  (int(size * 0.90), int(size * 0.90)),
+                  Image.LANCZOS
+              )
+              bg.alpha_composite(
+                  icon,
+                  ((size - icon.width) // 2,
+                   (size - icon.height) // 2)
+              )
               return bg
 
-          if logo is not None:
-              for d, s in {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}.items():
-                  p = res + '/mipmap-' + d
-                  os.makedirs(p, exist_ok=True)
-                  launcher(s).save(p + '/ic_launcher.png')
+          sizes = {
+              'mdpi': 48,
+              'hdpi': 72,
+              'xhdpi': 96,
+              'xxhdpi': 144,
+              'xxxhdpi': 192
+          }
 
+          for density, size in sizes.items():
+              folder = os.path.join(res, 'mipmap-' + density)
+              os.makedirs(folder, exist_ok=True)
+              launcher(size).save(
+                  os.path.join(folder, 'ic_launcher.png')
+              )
+
+          # Remove adaptive icon XML so transparent PNG icons are used
+          adaptive = os.path.join(res, 'mipmap-anydpi-v26')
+          if os.path.isdir(adaptive):
+              import shutil
+              shutil.rmtree(adaptive)
+
+          # Notification icon
           os.makedirs(res + '/drawable', exist_ok=True)
-          n = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
-          if logo is not None:
-              l = logo.copy()
-              l.thumbnail((90, 90), Image.LANCZOS)
-              white = Image.new('RGBA', l.size, (255, 255, 255, 255))
-              white.putalpha(l.split()[3])
-              n.alpha_composite(white, ((96 - l.width) // 2, (96 - l.height) // 2))
-          else:
-              ImageDraw.Draw(n).ellipse((12, 12, 84, 84), fill=(255, 255, 255, 255))
-          n.save(res + '/drawable/ic_notif.png')
+          notification = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
+
+          icon = logo.copy()
+          icon.thumbnail((88, 88), Image.LANCZOS)
+
+          white = Image.new('RGBA', icon.size, (255, 255, 255, 255))
+          white.putalpha(icon.getchannel('A'))
+
+          notification.alpha_composite(
+              white,
+              ((96 - icon.width) // 2,
+               (96 - icon.height) // 2)
+          )
+
+          notification.save(res + '/drawable/ic_notif.png')
           PY
 
       - name: Get dependencies
@@ -150,80 +188,3 @@ jobs:
           name: mizan-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-
-      
-      - name: Generate app icon and notification icon
-        run: |
-          python3 -m pip install --quiet --break-system-packages pillow
-          python3 - <<'PY'
-          import os
-          from PIL import Image
-
-          res = 'android/app/src/main/res'
-          logo_path = 'logo2.png'
-
-          logo = None
-          if os.path.exists(logo_path):
-              logo = Image.open(logo_path).convert('RGBA')
-
-              # Remove transparent empty margins around the logo
-              alpha = logo.getchannel('A')
-              bbox = alpha.getbbox()
-              if bbox:
-                  logo = logo.crop(bbox)
-
-          def launcher(size):
-              bg = Image.new('RGBA', (size, size), (6, 20, 43, 255))
-
-              if logo is not None:
-                  l = logo.copy()
-
-                  # Larger rectangular logo while preserving proportions
-                  max_width = int(size * 0.90)
-                  max_height = int(size * 0.90)
-                  l.thumbnail((max_width, max_height), Image.LANCZOS)
-
-                  x = (size - l.width) // 2
-                  y = (size - l.height) // 2
-
-                  bg.alpha_composite(l, (x, y))
-
-              return bg
-
-          if logo is not None:
-              sizes = {
-                  'mdpi': 48,
-                  'hdpi': 72,
-                  'xhdpi': 96,
-                  'xxhdpi': 144,
-                  'xxxhdpi': 192
-              }
-
-              for density, size in sizes.items():
-                  folder = os.path.join(res, 'mipmap-' + density)
-                  os.makedirs(folder, exist_ok=True)
-                  launcher(size).save(
-                      os.path.join(folder, 'ic_launcher.png')
-                  )
-
-          # Notification icon
-          os.makedirs(res + '/drawable', exist_ok=True)
-
-          notification = Image.new('RGBA', (96, 96), (0, 0, 0, 0))
-
-          if logo is not None:
-              icon = logo.copy()
-              icon.thumbnail((88, 88), Image.LANCZOS)
-
-              white = Image.new('RGBA', icon.size, (255, 255, 255, 255))
-              white.putalpha(icon.getchannel('A'))
-
-              notification.alpha_composite(
-                  white,
-                  ((96 - icon.width) // 2, (96 - icon.height) // 2)
-              )
-
-          notification.save(res + '/drawable/ic_notif.png')
-          PY
-
-
