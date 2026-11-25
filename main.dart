@@ -18,7 +18,7 @@ const String supabaseUrl = 'https://iwkhajjxybunfkaoapht.supabase.co';
 const String supabasePublishableKey = 'sb_publishable_jhGme2oBxCchOfy-h4ALyA_1GYYuHs2';
 
 const String officePhone = '01092790355';
-const String officeWhatsapp = '01092790355';
+const String officeWhatsapp = '01067095323';
 const String officeEmail = 'fareedhosam983@gmail.com';
 const String officeAddress = 'محافظة كفر الشيخ - الرياض - الوزارية الجديدة';
 
@@ -1149,10 +1149,49 @@ String timeAgo(dynamic iso) {
   return fmtDate(d);
 }
 
+String _latinDigits(String s) {
+  const ar = '٠١٢٣٤٥٦٧٨٩';
+  const fa = '۰۱۲۳۴۵۶۷۸۹';
+  final b = StringBuffer();
+  for (final ch in s.split('')) {
+    final i = ar.indexOf(ch);
+    final j = fa.indexOf(ch);
+    if (i >= 0) {
+      b.write(i);
+    } else if (j >= 0) {
+      b.write(j);
+    } else {
+      b.write(ch);
+    }
+  }
+  return b.toString();
+}
+
 String? normalizePhone(String raw) {
-  final cleaned = raw.replaceAll(RegExp(r'[\s\-()]'), '');
+  final cleaned = _latinDigits(raw).replaceAll(RegExp(r'[\s\-()]'), '');
   if (!RegExp(r'^\+?\d{10,15}$').hasMatch(cleaned)) return null;
   return cleaned;
+}
+
+/// الأرقام فقط بصيغة دولية موحّدة (01012345678 و +201012345678 يعطيان نفس النتيجة)
+String? phoneDigits(String raw) {
+  final cleaned = normalizePhone(raw);
+  if (cleaned == null) return null;
+  var d = cleaned.startsWith('+') ? cleaned.substring(1) : cleaned;
+  if (d.startsWith('00')) d = d.substring(2);
+  if (d.length == 11 && d.startsWith('01')) d = '20${d.substring(1)}';
+  return d;
+}
+
+/// بريد داخلي يُستخدم كمعرّف دخول للعميل الذي يسجّل برقم هاتفه
+String phoneAuthEmail(String digits) {
+  final parts = officeEmail.split('@');
+  return '${parts[0]}+$digits@${parts[1]}';
+}
+
+bool isPhoneLoginEmail(String email) {
+  final parts = officeEmail.split('@');
+  return email.startsWith('${parts[0]}+') && email.endsWith('@${parts[1]}');
 }
 
 class VerifiedBadge extends StatelessWidget {
@@ -1550,7 +1589,8 @@ class _NotificationBellState extends State<NotificationBell> {
 class NotificationTile extends StatelessWidget {
   final Map<String, dynamic> row;
   final VoidCallback? onTap;
-  const NotificationTile({super.key, required this.row, this.onTap});
+  final VoidCallback? onDelete;
+  const NotificationTile({super.key, required this.row, this.onTap, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -1604,6 +1644,12 @@ class NotificationTile extends StatelessWidget {
             ),
             child: const Icon(Icons.notifications_active_outlined, color: Colors.white, size: 21),
           ),
+          if (onDelete != null)
+            IconButton(
+              onPressed: onDelete,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.delete_outline, color: AppColors.muted, size: 20),
+            ),
         ],
       ),
     );
@@ -1618,29 +1664,38 @@ class NotificationsPage extends StatefulWidget {
 }
 
 class _NotificationsPageState extends State<NotificationsPage> {
-  late Future<List<Map<String, dynamic>>> _future;
+  List<Map<String, dynamic>> _rows = <Map<String, dynamic>>[];
+  bool _loading = true;
+  Object? _error;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
-    final uid = db.auth.currentUser!.id;
-    final data = await db
-        .from('notifications')
-        .select()
-        .eq('user_id', uid)
-        .order('created_at', ascending: false)
-        .limit(100);
-    return List<Map<String, dynamic>>.from(data);
-  }
-
-  void _reload() {
-    setState(() {
-      _future = _load();
-    });
+  Future<void> _load() async {
+    try {
+      final uid = db.auth.currentUser!.id;
+      final data = await db
+          .from('notifications')
+          .select()
+          .eq('user_id', uid)
+          .order('created_at', ascending: false)
+          .limit(100);
+      if (!mounted) return;
+      setState(() {
+        _rows = List<Map<String, dynamic>>.from(data);
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e;
+      });
+    }
     fetchUnreadCount();
   }
 
@@ -1648,7 +1703,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
     if (r['read'] != false) return;
     try {
       await db.from('notifications').update({'read': true}).eq('id', r['id']);
-      _reload();
+      if (mounted) setState(() => r['read'] = true);
+      fetchUnreadCount();
     } catch (_) {}
   }
 
@@ -1656,10 +1712,87 @@ class _NotificationsPageState extends State<NotificationsPage> {
     try {
       final uid = db.auth.currentUser!.id;
       await db.from('notifications').update({'read': true}).eq('user_id', uid).eq('read', false);
-      _reload();
+      await _load();
     } catch (_) {
       if (mounted) toast(context, 'تعذّر التحديث');
     }
+  }
+
+  Future<void> _deleteOne(Map<String, dynamic> r) async {
+    final index = _rows.indexOf(r);
+    setState(() => _rows.remove(r));
+    try {
+      final res = await db.from('notifications').delete().eq('id', r['id']).select();
+      if ((res as List).isEmpty) throw Exception('not deleted');
+      fetchUnreadCount();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _rows.insert(index < 0 ? 0 : index, r));
+        toast(context, 'تعذّر حذف الإشعار');
+      }
+    }
+  }
+
+  Future<void> _clearAll() async {
+    if (_rows.isEmpty) return;
+    final ok = await confirmDialog(context, 'حذف كل الإشعارات نهائيًا؟');
+    if (!ok) return;
+    try {
+      final uid = db.auth.currentUser!.id;
+      final res = await db.from('notifications').delete().eq('user_id', uid).select();
+      if ((res as List).isEmpty) {
+        if (mounted) toast(context, 'تعذّر حذف الإشعارات');
+        return;
+      }
+      if (mounted) setState(() => _rows = <Map<String, dynamic>>[]);
+      fetchUnreadCount();
+    } catch (_) {
+      if (mounted) toast(context, 'تعذّر حذف الإشعارات');
+    }
+  }
+
+  Widget _swipeBackground(AlignmentGeometry alignment) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      alignment: alignment,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: AppColors.danger.withValues(alpha: 0.22),
+      ),
+      child: const Icon(Icons.delete_outline, color: AppColors.danger),
+    );
+  }
+
+  Widget _body() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return ErrorBox(error: _error!, onRetry: _load);
+    if (_rows.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          EmptyState(icon: Icons.notifications_off_outlined, text: 'لا توجد إشعارات بعد'),
+        ],
+      );
+    }
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        for (final r in _rows)
+          Dismissible(
+            key: ValueKey(r['id'].toString()),
+            background: _swipeBackground(AlignmentDirectional.centerStart),
+            secondaryBackground: _swipeBackground(AlignmentDirectional.centerEnd),
+            onDismissed: (_) => _deleteOne(r),
+            child: NotificationTile(
+              row: r,
+              onTap: () => _markRead(r),
+              onDelete: () => _deleteOne(r),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -1671,49 +1804,24 @@ class _NotificationsPageState extends State<NotificationsPage> {
         centerTitle: true,
         title: const Text('الإشعارات'),
         actions: [
-          TextButton(
-            onPressed: _markAll,
-            child: const Text('قراءة الكل', style: TextStyle(color: AppColors.gold)),
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'read') {
+                _markAll();
+              } else if (v == 'clear') {
+                _clearAll();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(value: 'read', child: Text('تعليم الكل كمقروء')),
+              PopupMenuItem<String>(value: 'clear', child: Text('حذف كل الإشعارات')),
+            ],
           ),
         ],
       ),
       body: Backdrop(
         child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              _reload();
-              try {
-                await _future;
-              } catch (_) {}
-            },
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return ErrorBox(error: snap.error!, onRetry: _reload);
-                }
-                final rows = snap.data ?? [];
-                if (rows.isEmpty) {
-                  return ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: const [
-                      EmptyState(icon: Icons.notifications_off_outlined, text: 'لا توجد إشعارات بعد'),
-                    ],
-                  );
-                }
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    for (final r in rows) NotificationTile(row: r, onTap: () => _markRead(r)),
-                  ],
-                );
-              },
-            ),
-          ),
+          child: RefreshIndicator(onRefresh: _load, child: _body()),
         ),
       ),
     );
@@ -2536,7 +2644,10 @@ class AppDrawer extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Text(email, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+                        Text(
+                          isPhoneLoginEmail(email) ? (p['phone'] ?? '').toString() : email,
+                          style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                        ),
                       ],
                     ),
                   ),
@@ -3502,8 +3613,7 @@ class AuthPage extends StatefulWidget {
 
 class _AuthPageState extends State<AuthPage> {
   final TextEditingController _name = TextEditingController();
-  final TextEditingController _phone = TextEditingController();
-  final TextEditingController _email = TextEditingController();
+  final TextEditingController _id = TextEditingController();
   final TextEditingController _pass = TextEditingController();
   final TextEditingController _pass2 = TextEditingController();
   late bool _signup;
@@ -3518,8 +3628,7 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void dispose() {
     _name.dispose();
-    _phone.dispose();
-    _email.dispose();
+    _id.dispose();
     _pass.dispose();
     _pass2.dispose();
     super.dispose();
@@ -3528,13 +3637,13 @@ class _AuthPageState extends State<AuthPage> {
   String _arabicError(String m) {
     final s = m.toLowerCase();
     if (s.contains('invalid login')) {
-      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة';
+      return 'رقم الهاتف أو كلمة المرور غير صحيحة';
     }
     if (s.contains('already registered') || s.contains('already been registered')) {
-      return 'هذا البريد مسجّل بالفعل';
+      return 'رقم الهاتف هذا مسجّل بالفعل، سجّل الدخول بدل إنشاء حساب';
     }
     if (s.contains('email not confirmed')) {
-      return 'أكّد بريدك الإلكتروني أولًا من الرسالة التي وصلتك';
+      return 'الحساب غير مفعّل، تواصل مع المكتب';
     }
     if (s.contains('password')) {
       return 'كلمة المرور يجب ألا تقل عن 6 أحرف';
@@ -3543,24 +3652,25 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   Future<void> _submit() async {
-    final email = _email.text.trim();
+    final id = _id.text.trim();
     final pass = _pass.text;
-    if (email.isEmpty || pass.isEmpty) {
-      toast(context, 'اكتب البريد الإلكتروني وكلمة المرور');
+    if (id.isEmpty || pass.isEmpty) {
+      toast(context, _signup ? 'اكتب رقم الهاتف وكلمة المرور' : 'اكتب رقم الهاتف أو البريد وكلمة المرور');
       return;
     }
+    String email;
     String phone = '';
     if (_signup) {
       if (_name.text.trim().length < 3) {
         toast(context, 'اكتب الاسم الكامل');
         return;
       }
-      final p = normalizePhone(_phone.text);
-      if (p == null) {
-        toast(context, 'اكتب رقم هاتف صحيح (10 أرقام على الأقل)');
+      final digits = phoneDigits(id);
+      final cleaned = normalizePhone(id);
+      if (digits == null || cleaned == null) {
+        toast(context, 'اكتب رقم هاتف صحيح');
         return;
       }
-      phone = p;
       if (pass.length < 6) {
         toast(context, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
         return;
@@ -3569,6 +3679,17 @@ class _AuthPageState extends State<AuthPage> {
         toast(context, 'كلمتا المرور غير متطابقتين');
         return;
       }
+      email = phoneAuthEmail(digits);
+      phone = cleaned;
+    } else if (id.contains('@')) {
+      email = id;
+    } else {
+      final digits = phoneDigits(id);
+      if (digits == null) {
+        toast(context, 'اكتب رقم هاتف صحيح أو بريدًا إلكترونيًا');
+        return;
+      }
+      email = phoneAuthEmail(digits);
     }
     setState(() => _loading = true);
     try {
@@ -3580,7 +3701,7 @@ class _AuthPageState extends State<AuthPage> {
         );
         if (!mounted) return;
         if (res.session == null) {
-          toast(context, 'تم إنشاء الحساب. أكّد بريدك الإلكتروني ثم سجّل الدخول');
+          toast(context, 'تم إنشاء الحساب. سجّل الدخول الآن');
           setState(() => _signup = false);
         } else {
           Navigator.of(context).popUntil((r) => r.isFirst);
@@ -3626,43 +3747,25 @@ class _AuthPageState extends State<AuthPage> {
                       const SizedBox(height: 4),
                       Text(
                         _signup
-                            ? 'انضم إلى عملائنا واحصل على خدماتنا القانونية'
-                            : 'سجّل دخولك للوصول إلى حسابك',
+                            ? 'سجّل برقم هاتفك واحصل على خدماتنا القانونية'
+                            : 'سجّل دخولك برقم هاتفك للوصول إلى حسابك',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.muted, fontSize: 13),
                       ),
                       const SizedBox(height: 26),
                       if (_signup)
                         AppField(controller: _name, label: 'الاسم الكامل', icon: Icons.person_outline),
-                      if (_signup)
-                        AppField(
-                          controller: _phone,
-                          label: 'رقم الهاتف',
-                          icon: Icons.phone_outlined,
-                          keyboard: TextInputType.phone,
-                          helper: 'لا يمكن تغيير رقم الهاتف بعد التسجيل',
-                        ),
                       AppField(
-                        controller: _email,
-                        label: 'البريد الإلكتروني',
-                        icon: Icons.mail_outline,
-                        keyboard: TextInputType.emailAddress,
+                        controller: _id,
+                        label: _signup ? 'رقم الهاتف' : 'رقم الهاتف أو البريد الإلكتروني',
+                        icon: _signup ? Icons.phone_outlined : Icons.account_circle_outlined,
+                        keyboard: _signup ? TextInputType.phone : TextInputType.text,
+                        helper: _signup
+                            ? 'سيكون هذا الرقم هو اسم الدخول، ولا يمكن تغييره بعد التسجيل'
+                            : null,
                       ),
                       PasswordField(controller: _pass, label: 'كلمة المرور'),
                       if (_signup) PasswordField(controller: _pass2, label: 'تأكيد كلمة المرور'),
-                      if (!_signup)
-                        Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: TextButton(
-                            onPressed: _loading
-                                ? null
-                                : () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
-                                    ),
-                            child: const Text('نسيت كلمة المرور؟', style: TextStyle(color: AppColors.gold)),
-                          ),
-                        ),
                       const SizedBox(height: 6),
                       PrimaryButton(
                         label: _signup ? 'إنشاء الحساب' : 'تسجيل الدخول',
@@ -3678,180 +3781,6 @@ class _AuthPageState extends State<AuthPage> {
                           style: const TextStyle(color: AppColors.blue),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class ForgotPasswordPage extends StatefulWidget {
-  const ForgotPasswordPage({super.key});
-
-  @override
-  State<ForgotPasswordPage> createState() => _ForgotPasswordPageState();
-}
-
-class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
-  final TextEditingController _email = TextEditingController();
-  final TextEditingController _code = TextEditingController();
-  final TextEditingController _pass = TextEditingController();
-  final TextEditingController _pass2 = TextEditingController();
-  int _step = 0;
-  bool _loading = false;
-
-  @override
-  void dispose() {
-    _email.dispose();
-    _code.dispose();
-    _pass.dispose();
-    _pass2.dispose();
-    super.dispose();
-  }
-
-  String _err(String m) {
-    final s = m.toLowerCase();
-    if (s.contains('rate') || s.contains('seconds')) {
-      return 'تم إرسال عدد كبير من الرسائل، حاول بعد قليل';
-    }
-    if (s.contains('expired') || s.contains('invalid')) {
-      return 'الرمز غير صحيح أو انتهت صلاحيته';
-    }
-    if (s.contains('password')) {
-      return 'كلمة المرور يجب ألا تقل عن 6 أحرف';
-    }
-    return m;
-  }
-
-  Future<void> _send() async {
-    final email = _email.text.trim();
-    if (email.isEmpty) {
-      toast(context, 'اكتب بريدك الإلكتروني');
-      return;
-    }
-    setState(() => _loading = true);
-    try {
-      await db.auth.resetPasswordForEmail(email);
-      if (mounted) {
-        toast(context, 'تم إرسال رمز الاستعادة إلى بريدك الإلكتروني');
-        setState(() => _step = 1);
-      }
-    } on AuthException catch (e) {
-      if (mounted) toast(context, _err(e.message));
-    } catch (_) {
-      if (mounted) toast(context, 'تعذّر الاتصال. تأكد من الإنترنت');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _reset() async {
-    final code = _code.text.trim();
-    if (code.length < 6) {
-      toast(context, 'اكتب الرمز الذي وصلك على البريد');
-      return;
-    }
-    if (_pass.text.length < 6) {
-      toast(context, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
-      return;
-    }
-    if (_pass.text != _pass2.text) {
-      toast(context, 'كلمتا المرور غير متطابقتين');
-      return;
-    }
-    setState(() => _loading = true);
-    try {
-      await db.auth.verifyOTP(email: _email.text.trim(), token: code, type: OtpType.recovery);
-      await db.auth.updateUser(UserAttributes(password: _pass.text));
-      if (mounted) {
-        toast(context, 'تم تغيير كلمة المرور بنجاح');
-        Navigator.of(context).popUntil((r) => r.isFirst);
-      }
-    } on AuthException catch (e) {
-      if (mounted) toast(context, _err(e.message));
-    } catch (_) {
-      if (mounted) toast(context, 'تعذّر الاتصال. تأكد من الإنترنت');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Backdrop(
-        child: SafeArea(
-          child: Column(
-            children: [
-              Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.arrow_forward),
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 96,
-                        height: 96,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.blue.withValues(alpha: 0.14),
-                          border: Border.all(color: AppColors.blue.withValues(alpha: 0.6)),
-                        ),
-                        child: const Icon(Icons.lock_reset, size: 48, color: AppColors.blue),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'استعادة كلمة المرور',
-                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _step == 0
-                            ? 'اكتب بريدك الإلكتروني وسنرسل لك رمزًا لتعيين كلمة مرور جديدة'
-                            : 'اكتب الرمز الذي وصلك على بريدك ثم كلمة المرور الجديدة',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.muted, fontSize: 13, height: 1.6),
-                      ),
-                      const SizedBox(height: 26),
-                      AppField(
-                        controller: _email,
-                        label: 'البريد الإلكتروني',
-                        icon: Icons.mail_outline,
-                        keyboard: TextInputType.emailAddress,
-                        readOnly: _step == 1,
-                      ),
-                      if (_step == 1)
-                        AppField(
-                          controller: _code,
-                          label: 'رمز التحقق',
-                          icon: Icons.pin_outlined,
-                          keyboard: TextInputType.number,
-                        ),
-                      if (_step == 1) PasswordField(controller: _pass, label: 'كلمة المرور الجديدة'),
-                      if (_step == 1) PasswordField(controller: _pass2, label: 'تأكيد كلمة المرور'),
-                      const SizedBox(height: 8),
-                      PrimaryButton(
-                        label: _step == 0 ? 'إرسال الرمز' : 'تغيير كلمة المرور',
-                        icon: _step == 0 ? Icons.send : Icons.check,
-                        loading: _loading,
-                        onPressed: _step == 0 ? _send : _reset,
-                      ),
-                      if (_step == 1)
-                        TextButton(
-                          onPressed: _loading ? null : _send,
-                          child: const Text('إعادة إرسال الرمز', style: TextStyle(color: AppColors.blue)),
-                        ),
                     ],
                   ),
                 ),
@@ -4798,7 +4727,7 @@ class _ClientsPageState extends State<ClientsPage> {
     final email = (c['email'] ?? '').toString();
     final parts = <String>[
       if (phone.isNotEmpty) phone,
-      if (email.isNotEmpty) email,
+      if (email.isNotEmpty && !isPhoneLoginEmail(email)) email,
     ];
     return Panel(
       onTap: () => _open(c),
@@ -5157,13 +5086,14 @@ class _AccountPageState extends State<AccountPage> {
                       ? 'يمكن إدخال الرقم مرة واحدة فقط ولا يمكن تغييره بعد ذلك'
                       : 'رقم الهاتف لا يمكن تغييره بعد التسجيل',
                 ),
-                AppField(
-                  controller: TextEditingController(text: email),
-                  label: 'البريد الإلكتروني',
-                  icon: Icons.mail_outline,
-                  readOnly: true,
-                  suffix: const Icon(Icons.lock_outline, size: 18, color: AppColors.muted),
-                ),
+                if (!isPhoneLoginEmail(email))
+                  AppField(
+                    controller: TextEditingController(text: email),
+                    label: 'البريد الإلكتروني',
+                    icon: Icons.mail_outline,
+                    readOnly: true,
+                    suffix: const Icon(Icons.lock_outline, size: 18, color: AppColors.muted),
+                  ),
                 PrimaryButton(label: 'حفظ التغييرات', icon: Icons.check, loading: _saving, onPressed: _save),
                 const SectionTitle('الإعدادات'),
                 Panel(
