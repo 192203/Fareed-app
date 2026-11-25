@@ -180,7 +180,7 @@ jobs:
 
                   # Larger rectangular logo while preserving proportions
                   max_width = int(size * 0.90)
-                  max_height = int(size * 0.84)
+                  max_height = int(size * 0.90)
                   l.thumbnail((max_width, max_height), Image.LANCZOS)
 
                   x = (size - l.width) // 2
