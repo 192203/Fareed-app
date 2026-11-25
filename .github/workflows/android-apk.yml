@@ -106,7 +106,7 @@ jobs:
           import os
           from PIL import Image, ImageDraw
           res = 'android/app/src/main/res'
-          logo = Image.open('logo.png').convert('RGBA') if os.path.exists('logo.png') else None
+          logo = Image.open('logo2.png').convert('RGBA') if os.path.exists('logo2.png') else None
 
           def launcher(size):
               bg = Image.new('RGBA', (size, size), (6, 20, 43, 255))
