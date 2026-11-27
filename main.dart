@@ -763,6 +763,7 @@ class StatusChip extends StatelessWidget {
         return AppColors.blue;
       case 'مؤجلة':
       case 'قيد المراجعة':
+      case 'بانتظار التفعيل':
         return AppColors.gold;
       case 'محكوم فيها':
       case 'منتهية':
@@ -3603,6 +3604,8 @@ class WelcomePage extends StatelessWidget {
   }
 }
 
+final RegExp _emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+
 class AuthPage extends StatefulWidget {
   final bool signup;
   const AuthPage({super.key, this.signup = false});
@@ -3614,6 +3617,8 @@ class AuthPage extends StatefulWidget {
 class _AuthPageState extends State<AuthPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _id = TextEditingController();
+  final TextEditingController _phone = TextEditingController();
+  final TextEditingController _email = TextEditingController();
   final TextEditingController _pass = TextEditingController();
   final TextEditingController _pass2 = TextEditingController();
   late bool _signup;
@@ -3629,6 +3634,8 @@ class _AuthPageState extends State<AuthPage> {
   void dispose() {
     _name.dispose();
     _id.dispose();
+    _phone.dispose();
+    _email.dispose();
     _pass.dispose();
     _pass2.dispose();
     super.dispose();
@@ -3637,10 +3644,13 @@ class _AuthPageState extends State<AuthPage> {
   String _arabicError(String m) {
     final s = m.toLowerCase();
     if (s.contains('invalid login')) {
-      return 'رقم الهاتف أو كلمة المرور غير صحيحة';
+      return 'البيانات غير صحيحة، تأكد من الرقم أو البريد وكلمة المرور';
     }
-    if (s.contains('already registered') || s.contains('already been registered')) {
-      return 'رقم الهاتف هذا مسجّل بالفعل، سجّل الدخول بدل إنشاء حساب';
+    if (s.contains('already registered') ||
+        s.contains('already been registered') ||
+        s.contains('database error') ||
+        s.contains('duplicate')) {
+      return 'هذا الرقم أو البريد مسجّل من قبل';
     }
     if (s.contains('email not confirmed')) {
       return 'الحساب غير مفعّل، تواصل مع المكتب';
@@ -3651,64 +3661,118 @@ class _AuthPageState extends State<AuthPage> {
     return m;
   }
 
-  Future<void> _submit() async {
+  Future<String?> _resolveLoginEmail(String id) async {
+    try {
+      final res = await db.rpc('login_email_for', params: {'p_identifier': id});
+      if (res == null) return null;
+      return res.toString();
+    } catch (_) {
+      if (id.contains('@')) return id;
+      final d = phoneDigits(id);
+      return d == null ? null : phoneAuthEmail(d);
+    }
+  }
+
+  Future<String> _takenField(String phone, String email) async {
+    try {
+      final res = await db.rpc('identifier_taken', params: {'p_phone': phone, 'p_email': email});
+      return res == null ? '' : res.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<void> _login() async {
     final id = _id.text.trim();
     final pass = _pass.text;
     if (id.isEmpty || pass.isEmpty) {
-      toast(context, _signup ? 'اكتب رقم الهاتف وكلمة المرور' : 'اكتب رقم الهاتف أو البريد وكلمة المرور');
+      toast(context, 'اكتب رقم الهاتف أو البريد وكلمة المرور');
       return;
     }
-    String email;
-    String phone = '';
-    if (_signup) {
-      if (_name.text.trim().length < 3) {
-        toast(context, 'اكتب الاسم الكامل');
-        return;
-      }
-      final digits = phoneDigits(id);
-      final cleaned = normalizePhone(id);
-      if (digits == null || cleaned == null) {
-        toast(context, 'اكتب رقم هاتف صحيح');
-        return;
-      }
-      if (pass.length < 6) {
-        toast(context, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
-        return;
-      }
-      if (pass != _pass2.text) {
-        toast(context, 'كلمتا المرور غير متطابقتين');
-        return;
-      }
-      email = phoneAuthEmail(digits);
-      phone = cleaned;
-    } else if (id.contains('@')) {
-      email = id;
-    } else {
-      final digits = phoneDigits(id);
-      if (digits == null) {
-        toast(context, 'اكتب رقم هاتف صحيح أو بريدًا إلكترونيًا');
-        return;
-      }
-      email = phoneAuthEmail(digits);
+    if (!id.contains('@') && phoneDigits(id) == null) {
+      toast(context, 'اكتب رقم هاتف صحيح أو بريدًا إلكترونيًا');
+      return;
     }
     setState(() => _loading = true);
     try {
-      if (_signup) {
-        final res = await db.auth.signUp(
-          email: email,
-          password: pass,
-          data: {'full_name': _name.text.trim(), 'phone': phone},
-        );
-        if (!mounted) return;
-        if (res.session == null) {
-          toast(context, 'تم إنشاء الحساب. سجّل الدخول الآن');
-          setState(() => _signup = false);
-        } else {
-          Navigator.of(context).popUntil((r) => r.isFirst);
-        }
+      final email = await _resolveLoginEmail(id);
+      if (email == null) {
+        if (mounted) toast(context, 'لا يوجد حساب بهذه البيانات');
+        return;
+      }
+      await db.auth.signInWithPassword(email: email, password: pass);
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } on AuthException catch (e) {
+      if (mounted) toast(context, _arabicError(e.message));
+    } catch (_) {
+      if (mounted) toast(context, 'تعذّر الاتصال. تأكد من الإنترنت');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _register() async {
+    final phoneRaw = _phone.text.trim();
+    final emailRaw = _email.text.trim();
+    final pass = _pass.text;
+    if (_name.text.trim().length < 3) {
+      toast(context, 'اكتب الاسم الكامل');
+      return;
+    }
+    if (phoneRaw.isEmpty && emailRaw.isEmpty) {
+      toast(context, 'اكتب رقم الهاتف أو البريد الإلكتروني');
+      return;
+    }
+    String? digits;
+    String? cleaned;
+    if (phoneRaw.isNotEmpty) {
+      digits = phoneDigits(phoneRaw);
+      cleaned = normalizePhone(phoneRaw);
+      if (digits == null || cleaned == null) {
+        toast(context, 'رقم الهاتف غير صحيح');
+        return;
+      }
+    }
+    if (emailRaw.isNotEmpty && !_emailRegex.hasMatch(emailRaw)) {
+      toast(context, 'البريد الإلكتروني غير صحيح');
+      return;
+    }
+    if (pass.length < 6) {
+      toast(context, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
+      return;
+    }
+    if (pass != _pass2.text) {
+      toast(context, 'كلمتا المرور غير متطابقتين');
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final taken = await _takenField(cleaned ?? '', emailRaw.toLowerCase());
+      if (taken == 'phone') {
+        if (mounted) toast(context, 'رقم الهاتف هذا مسجّل من قبل');
+        return;
+      }
+      if (taken == 'email') {
+        if (mounted) toast(context, 'هذا البريد الإلكتروني مسجّل من قبل');
+        return;
+      }
+      final authEmail = digits != null ? phoneAuthEmail(digits) : emailRaw;
+      final contactEmail = (digits != null && emailRaw.isNotEmpty) ? emailRaw.toLowerCase() : '';
+      final res = await db.auth.signUp(
+        email: authEmail,
+        password: pass,
+        data: {
+          'full_name': _name.text.trim(),
+          'phone': cleaned ?? '',
+          'contact_email': contactEmail,
+        },
+      );
+      if (!mounted) return;
+      if (res.session == null) {
+        toast(context, 'تم إنشاء الحساب. سجّل الدخول الآن');
+        setState(() => _signup = false);
       } else {
-        await db.auth.signInWithPassword(email: email, password: pass);
-        if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+        Navigator.of(context).popUntil((r) => r.isFirst);
       }
     } on AuthException catch (e) {
       if (mounted) toast(context, _arabicError(e.message));
@@ -3747,31 +3811,59 @@ class _AuthPageState extends State<AuthPage> {
                       const SizedBox(height: 4),
                       Text(
                         _signup
-                            ? 'سجّل برقم هاتفك واحصل على خدماتنا القانونية'
-                            : 'سجّل دخولك برقم هاتفك للوصول إلى حسابك',
+                            ? 'سجّل ببياناتك واحصل على خدماتنا القانونية'
+                            : 'ادخل برقم هاتفك أو بريدك الإلكتروني',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.muted, fontSize: 13),
                       ),
                       const SizedBox(height: 26),
-                      if (_signup)
+                      if (_signup) ...[
                         AppField(controller: _name, label: 'الاسم الكامل', icon: Icons.person_outline),
-                      AppField(
-                        controller: _id,
-                        label: _signup ? 'رقم الهاتف' : 'رقم الهاتف أو البريد الإلكتروني',
-                        icon: _signup ? Icons.phone_outlined : Icons.account_circle_outlined,
-                        keyboard: _signup ? TextInputType.phone : TextInputType.text,
-                        helper: _signup
-                            ? 'سيكون هذا الرقم هو اسم الدخول، ولا يمكن تغييره بعد التسجيل'
-                            : null,
-                      ),
+                        AppField(
+                          controller: _phone,
+                          label: 'رقم الهاتف',
+                          icon: Icons.phone_outlined,
+                          keyboard: TextInputType.phone,
+                          helper: 'لا يمكن تغيير رقم الهاتف بعد التسجيل',
+                        ),
+                        AppField(
+                          controller: _email,
+                          label: 'البريد الإلكتروني (اختياري)',
+                          icon: Icons.mail_outline,
+                          keyboard: TextInputType.emailAddress,
+                          helper: 'يمكنك الدخول لاحقًا بالرقم أو بالبريد',
+                        ),
+                      ] else
+                        AppField(
+                          controller: _id,
+                          label: 'رقم الهاتف أو البريد الإلكتروني',
+                          icon: Icons.account_circle_outlined,
+                          keyboard: TextInputType.emailAddress,
+                        ),
                       PasswordField(controller: _pass, label: 'كلمة المرور'),
                       if (_signup) PasswordField(controller: _pass2, label: 'تأكيد كلمة المرور'),
+                      if (_signup)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              Icon(Icons.info_outline, size: 16, color: AppColors.gold),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'بعد التسجيل سيراجع المكتب بياناتك ثم يفعّل حسابك',
+                                  style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       const SizedBox(height: 6),
                       PrimaryButton(
                         label: _signup ? 'إنشاء الحساب' : 'تسجيل الدخول',
                         icon: _signup ? Icons.person_add_alt : Icons.login,
                         loading: _loading,
-                        onPressed: _submit,
+                        onPressed: _signup ? _register : _login,
                       ),
                       const SizedBox(height: 8),
                       TextButton(
@@ -3786,6 +3878,127 @@ class _AuthPageState extends State<AuthPage> {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PendingApprovalPage extends StatefulWidget {
+  final String status;
+  final VoidCallback onActivated;
+  const PendingApprovalPage({super.key, required this.status, required this.onActivated});
+
+  @override
+  State<PendingApprovalPage> createState() => _PendingApprovalPageState();
+}
+
+class _PendingApprovalPageState extends State<PendingApprovalPage> {
+  Timer? _timer;
+  bool _checking = false;
+  late String _status;
+
+  @override
+  void initState() {
+    super.initState();
+    _status = widget.status;
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) => _check(silent: true));
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _check({bool silent = false}) async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    try {
+      final uid = db.auth.currentUser!.id;
+      final p = await db.from('profiles').select().eq('id', uid).single();
+      if (!mounted) return;
+      profileNotifier.value = Map<String, dynamic>.from(p);
+      final s = (p['status'] ?? 'active').toString();
+      if (s == 'active') {
+        widget.onActivated();
+        return;
+      }
+      setState(() => _status = s);
+      if (!silent) toast(context, s == 'rejected' ? 'لم يتم تفعيل الحساب' : 'حسابك ما زال قيد المراجعة');
+    } catch (_) {
+      if (!silent && mounted) toast(context, 'تعذّر التحديث، تأكد من الإنترنت');
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rejected = _status == 'rejected';
+    final color = rejected ? AppColors.danger : AppColors.gold;
+    final name = (profileNotifier.value['full_name'] ?? '').toString();
+    final phone = (profileNotifier.value['phone'] ?? '').toString();
+    final text = Uri.encodeComponent('السلام عليكم، أنا $name ورقمي $phone، أرجو تفعيل حسابي على تطبيق ميزان');
+    return Scaffold(
+      body: Backdrop(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                children: [
+                  const BrandMark(size: 80),
+                  const SizedBox(height: 18),
+                  PulseScale(
+                    amount: 0.08,
+                    child: Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: color.withValues(alpha: 0.12),
+                        border: Border.all(color: color.withValues(alpha: 0.7), width: 2),
+                        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 28)],
+                      ),
+                      child: Icon(rejected ? Icons.block : Icons.hourglass_top, size: 46, color: color),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    rejected ? 'تعذّر تفعيل حسابك' : 'حسابك قيد المراجعة',
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    rejected
+                        ? 'تواصل مع المكتب لمعرفة السبب وإعادة المحاولة'
+                        : 'شكرًا لتسجيلك. سيراجع المكتب بياناتك ويفعّل حسابك قريبًا، وسيصلك إشعار فور التفعيل.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.muted, height: 1.8),
+                  ),
+                  const SizedBox(height: 28),
+                  PrimaryButton(
+                    label: 'تحديث الحالة',
+                    icon: Icons.refresh,
+                    loading: _checking,
+                    onPressed: () => _check(),
+                  ),
+                  const SizedBox(height: 12),
+                  GhostButton(
+                    label: 'تواصل مع المكتب عبر واتساب',
+                    icon: Icons.chat,
+                    onPressed: () => openLink(context, 'https://wa.me/2$officeWhatsapp?text=$text'),
+                  ),
+                  const SizedBox(height: 6),
+                  TextButton(
+                    onPressed: () => logout(),
+                    child: const Text('تسجيل الخروج', style: TextStyle(color: AppColors.danger)),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -4364,6 +4577,7 @@ class _CaseFormState extends State<CaseForm> {
           .from('profiles')
           .select('id, full_name')
           .eq('role', 'client')
+          .eq('status', 'active')
           .order('full_name');
       final rows = List<Map<String, dynamic>>.from(data);
       if (!mounted) return;
@@ -4680,19 +4894,47 @@ class _ClientsPageState extends State<ClientsPage> {
     _future = _load();
   }
 
+  int _rank(String s) {
+    if (s == 'pending') return 0;
+    if (s == 'rejected') return 1;
+    return 2;
+  }
+
   Future<List<Map<String, dynamic>>> _load() async {
     final data = await db
         .from('profiles')
         .select()
         .eq('role', 'client')
         .order('full_name');
-    return List<Map<String, dynamic>>.from(data);
+    final rows = List<Map<String, dynamic>>.from(data);
+    rows.sort((a, b) => _rank((a['status'] ?? 'active').toString())
+        .compareTo(_rank((b['status'] ?? 'active').toString())));
+    return rows;
   }
 
   void _reload() {
     setState(() {
       _future = _load();
     });
+  }
+
+  Future<void> _setStatus(Map<String, dynamic> c, String status) async {
+    final name = (c['full_name'] ?? '').toString();
+    if (status == 'rejected') {
+      final ok = await confirmDialog(context, 'رفض حساب ${name.isEmpty ? 'هذا العميل' : name}؟');
+      if (!ok) return;
+    }
+    try {
+      final res = await db.from('profiles').update({'status': status}).eq('id', c['id']).select();
+      if ((res as List).isEmpty) {
+        if (mounted) toast(context, 'تعذّر التحديث، تأكد أنك مسجّل بحساب المحامي');
+        return;
+      }
+      if (mounted) toast(context, status == 'active' ? 'تم تفعيل الحساب' : 'تم رفض الطلب');
+      _reload();
+    } catch (_) {
+      if (mounted) toast(context, 'تعذّر التحديث');
+    }
   }
 
   void _open(Map<String, dynamic> c) {
@@ -4725,33 +4967,68 @@ class _ClientsPageState extends State<ClientsPage> {
     final name = (c['full_name'] ?? '').toString();
     final phone = (c['phone'] ?? '').toString();
     final email = (c['email'] ?? '').toString();
+    final status = (c['status'] ?? 'active').toString();
     final parts = <String>[
       if (phone.isNotEmpty) phone,
-      if (email.isNotEmpty && !isPhoneLoginEmail(email)) email,
+      if ((isPhoneLoginEmail(email) ? (c['contact_email'] ?? '').toString() : email).isNotEmpty)
+        isPhoneLoginEmail(email) ? (c['contact_email'] ?? '').toString() : email,
     ];
     return Panel(
-      onTap: () => _open(c),
-      child: Row(
+      onTap: status == 'active' ? () => _open(c) : null,
+      child: Column(
         children: [
-          AvatarCircle(url: (c['avatar_url'] ?? '').toString(), name: name, radius: 22),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name.isEmpty ? 'بدون اسم' : name,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          Row(
+            children: [
+              AvatarCircle(url: (c['avatar_url'] ?? '').toString(), name: name, radius: 22),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name.isEmpty ? 'بدون اسم' : name,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    if (parts.isNotEmpty)
+                      Text(
+                        parts.join(' • '),
+                        style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                      ),
+                  ],
                 ),
-                if (parts.isNotEmpty)
-                  Text(
-                    parts.join(' • '),
-                    style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+              if (status == 'pending') const StatusChip('بانتظار التفعيل'),
+              if (status == 'rejected') const StatusChip('مرفوض'),
+              if (status == 'active') const Icon(Icons.chevron_left, color: AppColors.muted),
+            ],
+          ),
+          if (status != 'active') const SizedBox(height: 12),
+          if (status != 'active')
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => _setStatus(c, 'active'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.ok,
+                      foregroundColor: AppColors.navyDeep,
+                    ),
+                    icon: const Icon(Icons.check),
+                    label: const Text('تفعيل الحساب', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                if (status == 'pending') const SizedBox(width: 10),
+                if (status == 'pending')
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _setStatus(c, 'rejected'),
+                      style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
+                      icon: const Icon(Icons.close),
+                      label: const Text('رفض'),
+                    ),
                   ),
               ],
             ),
-          ),
-          const Icon(Icons.chevron_left, color: AppColors.muted),
         ],
       ),
     );
@@ -4766,7 +5043,7 @@ class _ClientsPageState extends State<ClientsPage> {
         children: [
           const PageHeader(
             title: 'العملاء',
-            subtitle: 'العملاء المسجّلون في التطبيق وقضاياهم',
+            subtitle: 'راجع الحسابات الجديدة وفعّلها، وتابع قضايا كل عميل',
           ),
           Expanded(
             child: RefreshIndicator(
@@ -4909,7 +5186,9 @@ class _AccountPageState extends State<AccountPage> {
     } on PostgrestException catch (e) {
       final m = e.message;
       if (mounted) {
-        if (m.contains('NAME_LOCKED')) {
+        if (e.code == '23505') {
+          toast(context, 'رقم الهاتف مسجّل لحساب آخر');
+        } else if (m.contains('NAME_LOCKED')) {
           toast(context, 'لا يمكن تعديل الاسم قبل مرور 7 أيام من آخر تعديل');
         } else if (m.contains('PHONE_LOCKED')) {
           toast(context, 'لا يمكن تغيير رقم الهاتف بعد تسجيله');
@@ -5009,6 +5288,7 @@ class _AccountPageState extends State<AccountPage> {
     final avatar = (_p['avatar_url'] ?? '').toString();
     final name = (_p['full_name'] ?? '').toString();
     final days = _lockedDays;
+    final shownEmail = isPhoneLoginEmail(email) ? (_p['contact_email'] ?? '').toString() : email;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: _loading
@@ -5086,9 +5366,9 @@ class _AccountPageState extends State<AccountPage> {
                       ? 'يمكن إدخال الرقم مرة واحدة فقط ولا يمكن تغييره بعد ذلك'
                       : 'رقم الهاتف لا يمكن تغييره بعد التسجيل',
                 ),
-                if (!isPhoneLoginEmail(email))
+                if (shownEmail.isNotEmpty)
                   AppField(
-                    controller: TextEditingController(text: email),
+                    controller: TextEditingController(text: shownEmail),
                     label: 'البريد الإلكتروني',
                     icon: Icons.mail_outline,
                     readOnly: true,
@@ -5337,8 +5617,11 @@ class _LawyerDashboardState extends State<LawyerDashboard> {
         .gte('session_at', nowIso)
         .order('session_at', ascending: true)
         .limit(20);
+    final pendingClients =
+        await db.from('profiles').select('id').eq('role', 'client').eq('status', 'pending');
     final list = List<Map<String, dynamic>>.from(upcoming);
     return {
+      'pending': (pendingClients as List).length,
       'clients': (clients as List).length,
       'cases': (cases as List).length,
       'consults': (newConsults as List).length,
@@ -5452,6 +5735,39 @@ class _LawyerDashboardState extends State<LawyerDashboard> {
                     ],
                   ),
                 ),
+              if (data != null && (data['pending'] as int) > 0) ...[
+                const SizedBox(height: 10),
+                FadeSlide(
+                  child: Panel(
+                    onTap: () => widget.onGo(1),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.how_to_reg, color: AppColors.gold),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'عملاء بانتظار تفعيل حساباتهم',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        PulseScale(
+                          amount: 0.12,
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            alignment: Alignment.center,
+                            decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.danger),
+                            child: Text(
+                              '${data['pending']}',
+                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 10),
               FadeSlide(
                 delayMs: 300,
@@ -5840,6 +6156,7 @@ class _RoleRouterState extends State<RoleRouter> {
       'full_name': meta == null ? '' : (meta['full_name'] ?? '').toString(),
       'phone': meta == null ? '' : (meta['phone'] ?? '').toString(),
       'role': 'client',
+      'status': 'pending',
     };
     await db.from('profiles').insert(row);
     profileNotifier.value = Map<String, dynamic>.from(row);
@@ -5882,6 +6199,10 @@ class _RoleRouterState extends State<RoleRouter> {
         }
         final p = snap.data!;
         if (p['role'] == 'lawyer') return const LawyerHome();
+        final status = (p['status'] ?? 'active').toString();
+        if (status != 'active') {
+          return PendingApprovalPage(status: status, onActivated: _retry);
+        }
         return const ClientHome();
       },
     );
