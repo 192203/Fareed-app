@@ -3617,8 +3617,6 @@ class AuthPage extends StatefulWidget {
 class _AuthPageState extends State<AuthPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _id = TextEditingController();
-  final TextEditingController _phone = TextEditingController();
-  final TextEditingController _email = TextEditingController();
   final TextEditingController _pass = TextEditingController();
   final TextEditingController _pass2 = TextEditingController();
   late bool _signup;
@@ -3634,8 +3632,6 @@ class _AuthPageState extends State<AuthPage> {
   void dispose() {
     _name.dispose();
     _id.dispose();
-    _phone.dispose();
-    _email.dispose();
     _pass.dispose();
     _pass2.dispose();
     super.dispose();
@@ -3646,10 +3642,7 @@ class _AuthPageState extends State<AuthPage> {
     if (s.contains('invalid login')) {
       return 'البيانات غير صحيحة، تأكد من الرقم أو البريد وكلمة المرور';
     }
-    if (s.contains('already registered') ||
-        s.contains('already been registered') ||
-        s.contains('database error') ||
-        s.contains('duplicate')) {
+    if (s.contains('already registered') || s.contains('already been registered')) {
       return 'هذا الرقم أو البريد مسجّل من قبل';
     }
     if (s.contains('email not confirmed')) {
@@ -3712,30 +3705,34 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   Future<void> _register() async {
-    final phoneRaw = _phone.text.trim();
-    final emailRaw = _email.text.trim();
+    final id = _id.text.trim();
     final pass = _pass.text;
     if (_name.text.trim().length < 3) {
       toast(context, 'اكتب الاسم الكامل');
       return;
     }
-    if (phoneRaw.isEmpty && emailRaw.isEmpty) {
+    if (id.isEmpty) {
       toast(context, 'اكتب رقم الهاتف أو البريد الإلكتروني');
       return;
     }
-    String? digits;
-    String? cleaned;
-    if (phoneRaw.isNotEmpty) {
-      digits = phoneDigits(phoneRaw);
-      cleaned = normalizePhone(phoneRaw);
-      if (digits == null || cleaned == null) {
-        toast(context, 'رقم الهاتف غير صحيح');
+    final isEmail = id.contains('@');
+    String authEmail;
+    String phone = '';
+    if (isEmail) {
+      if (!_emailRegex.hasMatch(id)) {
+        toast(context, 'البريد الإلكتروني غير صحيح');
         return;
       }
-    }
-    if (emailRaw.isNotEmpty && !_emailRegex.hasMatch(emailRaw)) {
-      toast(context, 'البريد الإلكتروني غير صحيح');
-      return;
+      authEmail = id.toLowerCase();
+    } else {
+      final digits = phoneDigits(id);
+      final cleaned = normalizePhone(id);
+      if (digits == null || cleaned == null) {
+        toast(context, 'اكتب رقم هاتف صحيح أو بريدًا إلكترونيًا');
+        return;
+      }
+      authEmail = phoneAuthEmail(digits);
+      phone = cleaned;
     }
     if (pass.length < 6) {
       toast(context, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
@@ -3745,9 +3742,10 @@ class _AuthPageState extends State<AuthPage> {
       toast(context, 'كلمتا المرور غير متطابقتين');
       return;
     }
+    final emailForCheck = isEmail ? authEmail : '';
     setState(() => _loading = true);
     try {
-      final taken = await _takenField(cleaned ?? '', emailRaw.toLowerCase());
+      final taken = await _takenField(phone, emailForCheck);
       if (taken == 'phone') {
         if (mounted) toast(context, 'رقم الهاتف هذا مسجّل من قبل');
         return;
@@ -3756,16 +3754,10 @@ class _AuthPageState extends State<AuthPage> {
         if (mounted) toast(context, 'هذا البريد الإلكتروني مسجّل من قبل');
         return;
       }
-      final authEmail = digits != null ? phoneAuthEmail(digits) : emailRaw;
-      final contactEmail = (digits != null && emailRaw.isNotEmpty) ? emailRaw.toLowerCase() : '';
       final res = await db.auth.signUp(
         email: authEmail,
         password: pass,
-        data: {
-          'full_name': _name.text.trim(),
-          'phone': cleaned ?? '',
-          'contact_email': contactEmail,
-        },
+        data: {'full_name': _name.text.trim(), 'phone': phone, 'contact_email': ''},
       );
       if (!mounted) return;
       if (res.session == null) {
@@ -3775,7 +3767,20 @@ class _AuthPageState extends State<AuthPage> {
         Navigator.of(context).popUntil((r) => r.isFirst);
       }
     } on AuthException catch (e) {
-      if (mounted) toast(context, _arabicError(e.message));
+      if (!mounted) return;
+      if (e.message.toLowerCase().contains('database error')) {
+        final t = await _takenField(phone, emailForCheck);
+        if (!mounted) return;
+        if (t == 'phone') {
+          toast(context, 'رقم الهاتف هذا مسجّل من قبل');
+        } else if (t == 'email') {
+          toast(context, 'هذا البريد الإلكتروني مسجّل من قبل');
+        } else {
+          toast(context, 'تعذّر إنشاء الحساب بسبب خطأ في الخادم. أبلغ المكتب بذلك');
+        }
+      } else {
+        toast(context, _arabicError(e.message));
+      }
     } catch (_) {
       if (mounted) toast(context, 'تعذّر الاتصال. تأكد من الإنترنت');
     } finally {
@@ -3811,35 +3816,21 @@ class _AuthPageState extends State<AuthPage> {
                       const SizedBox(height: 4),
                       Text(
                         _signup
-                            ? 'سجّل ببياناتك واحصل على خدماتنا القانونية'
+                            ? 'سجّل برقم هاتفك أو بريدك الإلكتروني'
                             : 'ادخل برقم هاتفك أو بريدك الإلكتروني',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.muted, fontSize: 13),
                       ),
                       const SizedBox(height: 26),
-                      if (_signup) ...[
+                      if (_signup)
                         AppField(controller: _name, label: 'الاسم الكامل', icon: Icons.person_outline),
-                        AppField(
-                          controller: _phone,
-                          label: 'رقم الهاتف',
-                          icon: Icons.phone_outlined,
-                          keyboard: TextInputType.phone,
-                          helper: 'لا يمكن تغيير رقم الهاتف بعد التسجيل',
-                        ),
-                        AppField(
-                          controller: _email,
-                          label: 'البريد الإلكتروني (اختياري)',
-                          icon: Icons.mail_outline,
-                          keyboard: TextInputType.emailAddress,
-                          helper: 'يمكنك الدخول لاحقًا بالرقم أو بالبريد',
-                        ),
-                      ] else
-                        AppField(
-                          controller: _id,
-                          label: 'رقم الهاتف أو البريد الإلكتروني',
-                          icon: Icons.account_circle_outlined,
-                          keyboard: TextInputType.emailAddress,
-                        ),
+                      AppField(
+                        controller: _id,
+                        label: 'رقم الهاتف أو البريد الإلكتروني',
+                        icon: Icons.account_circle_outlined,
+                        keyboard: TextInputType.emailAddress,
+                        helper: _signup ? 'ستدخل لاحقًا بنفس البيانات التي تسجّل بها الآن' : null,
+                      ),
                       PasswordField(controller: _pass, label: 'كلمة المرور'),
                       if (_signup) PasswordField(controller: _pass2, label: 'تأكيد كلمة المرور'),
                       if (_signup)
